@@ -1,0 +1,679 @@
+@page "/"
+@page "/library"
+@page "/library/{Status}"
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using YABT.Components.Layout
+@using YABT.Models
+@using YABT.Services
+@using YABT.ViewModels
+@inject YABT.IServices.ILibraryEntryService LibraryService
+@inject ProtectedLocalStorage LocalStorage
+@inject NavigationManager Navigation
+@layout AuthenticatedLayout
+
+
+
+@******* NAVIGATION *******@
+<div class="library-filters d-flex justify-content-center mb-4">
+    <div class="btn-group btn-group-lg" role="group">
+        <NavLink href="/library"
+                 class="btn btn-outline-secondary px-5"
+                 Match="NavLinkMatch.All">
+            All Books
+        </NavLink>
+
+        <NavLink href="/library/reading" class="btn btn-outline-secondary px-5">
+            Currently Reading
+        </NavLink>
+
+        <NavLink href="/library/finished" class="btn btn-outline-secondary px-5">
+            Finished
+        </NavLink>
+
+        <NavLink href="/library/toread" class="btn btn-outline-secondary px-5">
+            Planning to Read
+        </NavLink>
+
+        <NavLink href="/library/dropped" class="btn btn-outline-secondary px-5">
+            Dropped
+        </NavLink>
+    </div>
+</div>
+
+
+@******* FILTERS *******@
+<div class="library-filter-toggle d-flex justify-content-center mb-3">
+    <button class="btn btn-outline-primary" @onclick="ToggleFilter">
+        <i class="bi bi-funnel me-1"></i>
+        @(IsFilterVisible ? "Hide Filter" : "Show Filter")
+    </button>
+</div>
+
+@if (IsFilterVisible)
+{
+    <div class="library-filter d-flex justify-content-center gap-2 mb-4 flex-wrap">
+        <!-- 1) Parameter select -->
+        <select class="form-select w-auto" @bind="FilterParameter">
+            <option value="Title">Title</option>
+            <option value="Authors">Authors</option>
+            <option value="Comment">Comment</option>
+            <option value="Score">Score</option>
+            <option value="Language">Language</option>
+            <option value="Categories">Categories</option>
+        </select>
+
+        <!-- 2) Value input -->
+        @if (FilterParameter == "Title" || FilterParameter == "Authors" || FilterParameter == "Comment")
+        {
+            <input type="text" class="form-control w-auto" placeholder="Enter filter"
+                   @bind="FilterValue" @bind:event="oninput" />
+        }
+        else if (FilterParameter == "Score")
+        {
+            <select class="form-select w-auto" @bind="FilterValue">
+                <option value="-1">—</option>
+                @for (int i = 1; i <= 10; i++)
+                {
+                    <option value="@i">@i</option>
+                }
+            </select>
+        }
+        else if (FilterParameter == "Language")
+        {
+            <select class="form-select w-auto" @bind="FilterValue">
+                <option value="">All</option>
+                @foreach (var lang in LibraryBooks.Where(b => !b.Entry.IsDeleted).Select(b => b.Book.Language?.ToUpper())
+                                                  .Distinct()
+                                                  .Where(l => !string.IsNullOrWhiteSpace(l)))
+                {
+                    <option value="@lang">@lang</option>
+                }
+            </select>
+        }
+        else if (FilterParameter == "Categories")
+        {
+            <select class="form-select w-auto" @bind="FilterValue">
+                <option value="">All</option>
+                @foreach (var cat in LibraryBooks.Where(b => !b.Entry.IsDeleted).SelectMany(b => b.Book.Categories)
+                                                 .Distinct())
+                {
+                    <option value="@cat">@cat</option>
+                }
+            </select>
+        }
+    </div>
+}
+
+
+@if (LibraryBooks == null)
+{
+    <div class="text-muted">Loading library…</div>
+}
+else if (!LibraryBooks.Any())
+{
+    <div class="text-muted">Your library is empty.</div>
+}
+else
+{
+    <div class="library-list">
+        <div class="library-header">
+
+            <div class="library-col index sortable"
+                 @onclick="@(() => SortBy("Index"))">
+                <span class="header-text">#</span>
+                <span class="header-indicator">
+                    @SortIndicator("Index")
+                </span>
+            </div>
+
+            <div class="library-col cover"></div>
+
+            <div class="library-col main sortable header-cell"
+                 @onclick="@(() => SortBy("Title"))">
+                <span class="header-text">Title</span>
+                <span class="header-indicator">
+                    @SortIndicator("Title")
+                </span>
+            </div>
+
+            <div class="library-col actions"></div>
+
+            <div class="library-col score sortable"
+                 @onclick="@(() => SortBy("Score"))">
+                <span class="header-text">Score</span>
+                <span class="header-indicator">
+                    @SortIndicator("Score")
+                </span>
+            </div>
+
+            <div class="library-col progress">
+                <span class="header-text">Progress</span>
+            </div>
+
+            <div class="library-col language sortable"
+                 @onclick="@(() => SortBy("Language"))">
+                <span class="header-text">Lang</span>
+                <span class="header-indicator">
+                    @SortIndicator("Language")
+                </span>
+            </div>
+
+            <div class="library-col categories sortable"
+                 @onclick="@(() => SortBy("Categories"))">
+                <span class="header-text">Categories</span>
+                <span class="header-indicator">
+                    @SortIndicator("Categories")
+                </span>
+            </div>
+
+        </div>
+        @foreach (var item in FilteredBooks)
+        {
+            <div class="library-row card shadow-sm">
+
+                <!-- 1) Index -->
+                <div class="library-col index">
+                    @libraryIndexMap[item.Entry.Id]
+                </div>
+
+                <!-- 2) Cover -->
+                <div class="library-col cover">
+                    <img src="@(string.IsNullOrWhiteSpace(item.Book.CoverImageURL)
+                                  ? "/Images/no-cover.jpg"
+                                  : item.Book.CoverImageURL)"
+                         alt="Book cover"/>
+                </div>
+
+                <!-- 3) Title + Authors + Comment -->
+                <div class="library-col main">
+                    <div class="title">@item.Book.Title</div>
+                    <div class="authors text-muted">
+                        @string.Join(", ", item.Book.Authors)
+                    </div>
+
+                    <div class="comment">
+                        @if (editingCommentEntryId == item.Entry.Id)
+                        {
+                            <input class="comment-input"
+                                   @bind="item.Entry.Comment"
+                                   @bind:event="oninput"
+                                   @onblur="() => FinishEditing(item.Entry, id => editingCommentEntryId = id)"
+                                   @onkeydown="(e) => OnCommentKeyDown(e, item.Entry, id => editingCommentEntryId = id)"
+                                   @ref="commentInputRef"/>
+                        }
+                        else
+                        {
+                            <span class="comment-text"
+                                  @onclick="() => StartEditing(item.Entry, id => editingCommentEntryId = id, true)">
+                                @if (string.IsNullOrWhiteSpace(item.Entry.Comment))
+                                {
+                                    <span class="text-muted fst-italic">Add comment</span>
+                                }
+                                else
+                                {
+                                    @item.Entry.Comment
+                                }
+                            </span>
+                        }
+                    </div>
+                </div>
+
+                <!-- 4) Actions -->
+                <div class="library-col actions">
+                    <button class="btn btn-sm btn-outline-primary"
+                            @onclick="() => Edit(item.Entry)">
+                        Edit
+                    </button>
+                    <button class="btn btn-sm btn-outline-secondary"
+                            @onclick:stopPropagation
+                            @onclick="() => ToggleDetails(item.Entry.Id)">
+                        @(expandedEntryId == item.Entry.Id ? "Less" : "More")
+                    </button>
+                </div>
+
+                <!-- 5) Score -->
+                <div class="library-col score">
+                    @* @(item.Entry.Score >= 0 ? item.Entry.Score.ToString() : "—") *@
+                    @if (editingScoreEntryId == item.Entry.Id)
+                    {
+                        <select class="score-select"
+                                @bind="item.Entry.Score"
+                                @onblur="() => FinishEditing(item.Entry, id => editingScoreEntryId = id)"
+                                @onclick:stopPropagation>
+                            <option value="-1">—</option>
+                            @for (int i = 1; i <= 10; i++)
+                            {
+                                <option value="@i">@i</option>
+                            }
+                        </select>
+                    }
+                    else
+                    {
+                        <span class="score-text"
+                              @onclick:stopPropagation
+                              @onclick="() => StartEditing(item.Entry, id => editingScoreEntryId = id)">
+                            @(item.Entry.Score >= 0 ? item.Entry.Score.ToString() : "—")
+                        </span>
+                    }
+                </div>
+
+                <!-- 6) Progress -->
+                <div class="library-col progress">
+                    @if (editingProgressEntryId == item.Entry.Id)
+                    {
+                        var effectivePageCount = GetEffectivePageCount(item.Entry, item.Book);
+
+                        <div class="progress-editor">
+                            <!-- Current page -->
+                            <input type="number"
+                                   class="progress-input"
+                                   min="0"
+                                   max="@(effectivePageCount > 0 ? effectivePageCount : int.MaxValue)"
+                                   value="@(item.Entry.CurrentPage >= 0 ? item.Entry.CurrentPage : null)"
+                                   @oninput="e => { var maxPage = effectivePageCount > 0 ? effectivePageCount : int.MaxValue; item.Entry.CurrentPage = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? -1 : Math.Clamp(int.Parse(e.Value.ToString()), 0, maxPage); }"
+                                   @onblur="() => FinishEditing(item.Entry, id => editingProgressEntryId = id)"/>
+
+                            <span class="progress-separator">/</span>
+
+                            <!-- Page count -->
+                            <input type="number"
+                                   class="progress-input"
+                                   min="1"
+                                   value="@(item.Entry.CustomPageCount > 0 ? item.Entry.CustomPageCount : null)"
+                                   placeholder="@(item.Book.PageCount > 0 ? item.Book.PageCount.ToString() : "—")"
+                                   @oninput="e => item.Entry.CustomPageCount = string.IsNullOrWhiteSpace(e.Value?.ToString()) ? -1 : Math.Max(1, int.Parse(e.Value.ToString()))"
+                                   @onblur="() => FinishEditing(item.Entry, id => editingProgressEntryId = id)"/>
+                        </div>
+                    }
+                    else
+                    {
+                        <span class="progress-text"
+                              @onclick="() => StartEditing(item.Entry, id => editingProgressEntryId = id)">
+                            <span class="progress-text-number">@DisplayBookPage(item.Entry.CurrentPage)</span>
+                            <span class="progress-separator">/</span>
+                            <span class="progress-text-number">@DisplayBookPage(GetEffectivePageCount(item.Entry, item.Book))</span>
+                        </span>
+                    }
+                </div>
+
+                <!-- 7) Language -->
+                <div class="library-col language">
+                    <span class="badge bg-light text-dark border">
+                        @item.Book.Language?.ToUpper()
+                    </span>
+                </div>
+
+                <!-- 8) Categories -->
+                <div class="library-col categories">
+                    @foreach (var cat in item.Book.Categories)
+                    {
+                        <span class="badge bg-secondary me-1">@cat</span>
+                    }
+                </div>
+
+            </div>
+
+            //DETAILS ELEMENT ON CLICKING "MORE"
+            @if (expandedEntryId == item.Entry.Id)
+            {
+                <div class="library-details card shadow-sm">
+                    <div class="library-details-content">
+
+                        <div class="details-section">
+                            <h6>Description</h6>
+                            <p class="text-muted">
+                                @(string.IsNullOrWhiteSpace(item.Book.Description)
+                                    ? "No description available."
+                                    : item.Book.Description)
+                            </p>
+                        </div>
+
+                        <div class="details-grid">
+                            <div><strong>Publisher:</strong> @item.Book.Publisher</div>
+                            <div><strong>Release:</strong> @item.Book.ReleaseDate?.Year</div>
+                            <div><strong>Status:</strong> @(Utility.GetEnumDescription(item.Entry.Status))</div>
+                            <div><strong>Added:</strong> @item.Entry.DateAdded?.ToShortDateString()</div>
+                            @if (item.Entry.Status == ReadingStatus.Finished && item.Entry.DateCompleted is not null)
+                            {
+                                <div><strong>Finished:</strong> @item.Entry.DateCompleted?.ToShortDateString()</div>
+                            }
+                        </div>
+
+                    </div>
+                </div>
+            }
+        }
+    </div>
+}
+
+
+@******* MODAL *******@
+@if (EditingEntryCopy != null)
+{
+    <div class="modal-backdrop-custom @(IsEditModalVisible ? "show" : "")"
+         @onclick="CloseEditModal"></div>
+
+    @if (IsEditModalVisible)
+    {
+        <div class="modal-wrapper">
+            <div class="modal-dialog @(IsEditModalVisible ? "show" : "")"
+                 @onclick:stopPropagation>
+
+                <button class="btn-close float-end" @onclick="CloseEditModal"></button>
+
+                <h4>Edit Library Entry</h4>
+
+                <div class="mb-3">
+                    <label class="form-label">Status</label>
+                    <select class="form-select" @bind="EditingEntryCopy.Status">
+                        @foreach (ReadingStatus status in Enum.GetValues(typeof(ReadingStatus)))
+                        {
+                            <option value="@status">@Utility.GetEnumDescription(status)</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Score</label>
+                    <select class="form-select" @bind="EditingEntryCopy.Score">
+                        <option value="-1">—</option>
+                        @for (int i = 1; i <= 10; i++)
+                        {
+                            <option value="@i">@i</option>
+                        }
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Date Started</label>
+                    <InputDate class="form-control" @bind-Value="EditingEntryCopy.DateStarted" />
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label">Date Finished</label>
+                    <InputDate class="form-control" @bind-Value="EditingEntryCopy.DateCompleted" />
+                </div>
+
+                <div class="d-flex gap-2 mt-3">
+                    <button class="btn btn-success" @onclick="SaveLibraryEntry">Save</button>
+                    <button class="btn btn-danger" @onclick="DeleteLibraryEntry">Delete</button>
+                </div>
+
+            </div>
+        </div>
+    }
+}
+
+
+@code {
+    [Parameter]
+    public string? Status { get; set; }
+    
+    private List<LibraryBookViewModel> LibraryBooks;
+    private string userId;
+    private bool _loaded;
+    private Dictionary<string, int> libraryIndexMap = new();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        //for autofocusing book comment on editing
+        if (_focusCommentInput)
+        {
+            _focusCommentInput = false;
+            await commentInputRef.FocusAsync();
+        }
+        
+        //for modal
+        if (ShouldAnimateEditIn)
+        {
+            ShouldAnimateEditIn = false;
+            await Task.Yield(); // wait one render frame
+            IsEditModalVisible = true;
+            StateHasChanged();
+        }
+        
+        if (!firstRender || _loaded)
+            return;
+
+        _loaded = true;
+
+        var result = await LocalStorage.GetAsync<string>("YABTUserId");
+        userId = result.Value;
+
+        await UpdateBooks();
+    }
+
+    private async Task UpdateBooks()
+    {
+        LibraryBooks = await LibraryService.GetUserLibraryBooksAsync(userId);
+        
+        //remove books makred as deleted
+        LibraryBooks = LibraryBooks.Where(b => !b.Entry.IsDeleted).ToList();
+        
+        libraryIndexMap = LibraryBooks
+            .OrderBy(b => b.Entry.DateAdded)
+            .Select((b, i) => new { b.Entry.Id, Index = i + 1 })
+            .ToDictionary(x => x.Id, x => x.Index);
+
+        StateHasChanged();
+    }
+    
+    private IEnumerable<LibraryBookViewModel> FilteredBooks
+    {
+        get
+        {
+            if (LibraryBooks is null)
+                return Enumerable.Empty<LibraryBookViewModel>();
+
+            // Only include entries that are not deleted
+            var visibleBooks = LibraryBooks.Where(b => !b.Entry.IsDeleted);
+
+            // Status filter
+            if (!string.IsNullOrWhiteSpace(Status) &&
+                Enum.TryParse<ReadingStatus>(Status, true, out var parsedStatus))
+            {
+                visibleBooks = visibleBooks.Where(b => b.Entry.Status == parsedStatus);
+            }
+
+            // Dynamic parameter filter
+            if (!string.IsNullOrWhiteSpace(FilterValue))
+            {
+                visibleBooks = FilterParameter switch
+                {
+                    "Title" => visibleBooks.Where(b => b.Book.Title.Contains(FilterValue, StringComparison.OrdinalIgnoreCase)),
+                    "Authors" => visibleBooks.Where(b => b.Book.Authors.Any(a => a.Contains(FilterValue, StringComparison.OrdinalIgnoreCase))),
+                    "Comment" => visibleBooks.Where(b => !string.IsNullOrEmpty(b.Entry.Comment) && b.Entry.Comment.Contains(FilterValue, StringComparison.OrdinalIgnoreCase)),
+                    "Score" => int.TryParse(FilterValue, out var score) 
+                        ? visibleBooks.Where(b => b.Entry.Score == score)
+                        : visibleBooks,
+                    "Language" => visibleBooks.Where(b => string.Equals(b.Book.Language, FilterValue, StringComparison.OrdinalIgnoreCase)),
+                    "Categories" => visibleBooks.Where(b => b.Book.Categories.Contains(FilterValue)),
+                    _ => visibleBooks
+                };
+            }
+
+            return visibleBooks;
+        }
+    }
+    
+    // private string? editingEntryId;
+    private string? editingCommentEntryId;
+    private string? editingScoreEntryId;
+    private string? editingProgressEntryId;
+    private ElementReference commentInputRef;
+    private bool _focusCommentInput;
+
+
+    private void StartEditing(LibraryEntry entry, Action<string?> setEditingId, bool focusCommentInput = false)
+    {
+        setEditingId(entry.Id);
+        _focusCommentInput = focusCommentInput;
+    }
+
+    private async Task FinishEditing(LibraryEntry entry,  Action<string?> clearEditingId)
+    {
+        clearEditingId(null);
+
+        // Update the DB
+        LibraryService.AddOrUpdateOne(entry);
+        // StateHasChanged();
+    }
+
+    private async Task OnCommentKeyDown(KeyboardEventArgs e, LibraryEntry entry, Action<string?> clearEditingId)
+    {
+        if (e.Key == "Enter" || e.Key == "Escape")
+        {
+            await FinishEditing(entry, clearEditingId);
+        }
+    }
+    
+    private int GetEffectivePageCount(LibraryEntry entry, Book book)
+    {
+        return entry.CustomPageCount > 0
+            ? entry.CustomPageCount
+            : (book.PageCount > 0 ? book.PageCount : -1);
+    }
+
+    private string DisplayBookPage(int value) => value >= 0 ? value.ToString() : "—";
+
+    private void Edit(LibraryEntry entry)
+    {
+        EditingEntryOriginal = entry;
+        EditingEntryCopy = new LibraryEntry
+        {
+            Status = entry.Status,
+            Score = entry.Score,
+            DateStarted = entry.DateStarted,
+            DateCompleted = entry.DateCompleted,
+            IsDeleted = entry.IsDeleted
+        };
+
+        IsEditModalVisible = false;
+        ShouldAnimateEditIn = true;
+    }
+    
+    private string? expandedEntryId;
+
+    private void ToggleDetails(string entryId)
+    {
+        expandedEntryId = expandedEntryId == entryId ? null : entryId;
+    }
+    
+    private string? sortColumn;
+    private bool sortAscending = true;
+
+    private void SortBy(string column)
+    {
+        if (sortColumn == column)
+            sortAscending = !sortAscending;
+        else
+        {
+            sortColumn = column;
+            sortAscending = true;
+        }
+
+        LibraryBooks = sortColumn switch
+        {
+            "Index" => sortAscending
+                ? LibraryBooks.OrderBy(b => libraryIndexMap[b.Entry.Id]).ToList()
+                : LibraryBooks.OrderByDescending(b => libraryIndexMap[b.Entry.Id]).ToList(),
+
+            "Title" => sortAscending
+                ? LibraryBooks.OrderBy(b => b.Book.Title).ToList()
+                : LibraryBooks.OrderByDescending(b => b.Book.Title).ToList(),
+
+            "Score" => sortAscending
+                ? LibraryBooks.OrderBy(b => b.Entry.Score).ToList()
+                : LibraryBooks.OrderByDescending(b => b.Entry.Score).ToList(),
+
+            "Progress" => sortAscending
+                ? LibraryBooks.OrderBy(b => b.Entry.CurrentPage).ToList()
+                : LibraryBooks.OrderByDescending(b => b.Entry.CurrentPage).ToList(),
+
+            "Language" => sortAscending
+                ? LibraryBooks.OrderBy(b => b.Book.Language).ToList()
+                : LibraryBooks.OrderByDescending(b => b.Book.Language).ToList(),
+                
+            "Categories" => sortAscending
+                ? LibraryBooks.OrderBy(b => b.Book.Categories
+                        .OrderBy(c => c)
+                        .FirstOrDefault())
+                    .ToList()
+                : LibraryBooks.OrderByDescending(b => b.Book.Categories
+                        .OrderBy(c => c)
+                        .FirstOrDefault())
+                    .ToList(),
+
+            _ => LibraryBooks
+        };
+    }
+    private RenderFragment SortIndicator(string column) => builder =>
+    {
+        if (sortColumn != column)
+            return;
+
+        builder.AddContent(0, sortAscending ? " ▲" : " ▼");
+    };
+    
+    
+    /******* MODAL *******/
+    private LibraryEntry? EditingEntryOriginal { get; set; }  // reference to the real entry
+    private LibraryEntry? EditingEntryCopy { get; set; }      // copy we edit in modal
+    private bool IsEditModalVisible { get; set; }
+    private bool ShouldAnimateEditIn { get; set; }
+    
+    private async Task CloseEditModal()
+    {
+        IsEditModalVisible = false;
+        await Task.Delay(200); // match CSS transition
+        EditingEntryOriginal = null;
+        EditingEntryCopy = null;
+    }
+
+    private void SaveLibraryEntry()
+    {
+        if (EditingEntryOriginal != null && EditingEntryCopy != null)
+        {
+            // copy the modified fields back
+            EditingEntryOriginal.Status = EditingEntryCopy.Status;
+            EditingEntryOriginal.Score = EditingEntryCopy.Score;
+            EditingEntryOriginal.DateStarted = EditingEntryCopy.DateStarted;
+            EditingEntryOriginal.DateCompleted = EditingEntryCopy.DateCompleted;
+            EditingEntryOriginal.IsDeleted = EditingEntryCopy.IsDeleted;
+
+            EditingEntryOriginal.LastUpdate = DateTime.UtcNow;
+            
+            LibraryService.AddOrUpdateOne(EditingEntryOriginal);
+
+            CloseEditModal();
+        }
+    }
+
+    private void DeleteLibraryEntry()
+    {
+        if (EditingEntryOriginal != null)
+        {
+            EditingEntryOriginal.IsDeleted = true;
+            EditingEntryOriginal.LastUpdate = DateTime.UtcNow;
+            LibraryService.AddOrUpdateOne(EditingEntryOriginal);
+            CloseEditModal();
+        }
+    }
+    
+    
+    /******* FILTERING *******/
+    private bool IsFilterVisible { get; set; } = false;
+    private string FilterParameter { get; set; } = "Title";
+    private string FilterValue { get; set; } = string.Empty;
+
+    private void ToggleFilter()
+    {
+        IsFilterVisible = !IsFilterVisible;
+        if (!IsFilterVisible)
+        {
+            // Reset filter when hiding
+            FilterParameter = "Title";
+            FilterValue = string.Empty;
+        }
+    }
+}

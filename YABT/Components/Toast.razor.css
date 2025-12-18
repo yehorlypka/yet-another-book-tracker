@@ -1,0 +1,36 @@
+/******* TOAST *******/
+.toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background-color: var(--bs-body-bg);
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    box-shadow: 0 0 10px rgba(var(--bs-body-color-rgb), 0.2);
+    font-size: 14px;
+    z-index: 9999;
+    display: none; /* Hidden by default, controlled by Blazor logic */
+}
+
+.toast-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.toast-content span {
+    color: var(--bs-body-color);
+}
+
+.toast-close {
+    background: none;
+    color: var(--bs-body-color);
+    border: none;
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.toast-close:hover {
+    color: #f0f0f0;
+}

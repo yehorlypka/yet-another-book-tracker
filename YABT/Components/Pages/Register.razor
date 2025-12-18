@@ -1,0 +1,92 @@
+﻿@page "/register"
+@rendermode InteractiveServer
+
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using Microsoft.AspNetCore.Identity
+@using YABT.Models
+@using YABT.Services
+@inject YABT.IServices.IUserService UserService
+@inject ToastService ToastService
+@inject ProtectedLocalStorage LocalStorage
+@inject NavigationManager Navigation
+
+<PageTitle>Register</PageTitle>
+
+<div class="container vh-100 d-flex flex-column align-items-center justify-content-center">
+    <div class="card shadow-sm p-4" style="width: 100%; max-width: 450px;">
+        <h3 class="text-center mb-4">Create account</h3>
+
+        <EditForm Model="User" OnValidSubmit="TryRegister">
+            <div class="mb-3">
+                <label class="form-label">Email</label>
+                <input type="email" @bind="User.Email" class="form-control" placeholder="you@example.com" required>
+            </div>
+            
+            <div class="mb-3">
+                <label class="form-label">Username</label>
+                <input type="text" @bind="User.Username" class="form-control" required>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label">Password</label>
+                <div class="input-group">
+                    <InputText class="form-control" type="@passwordType" @bind-Value="password" required/>
+                    <button type="button" class="btn btn-outline-secondary" @onclick="TogglePassword" aria-label="Toggle password visibility">
+                        <i class="bi @(passwordType == "password" ? "bi-eye" : "bi-eye-slash")"></i>
+                    </button>
+                </div>
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold">Register</button>
+        </EditForm>
+
+        <div class="text-center mt-3">
+            <small>
+                Already have an account?
+                <a href="/login">Login</a>
+            </small>
+        </div>
+    </div>
+</div>
+
+@code {
+    User User = new User();
+
+    private async Task TryRegister()
+    {
+        if (UserExists(User.Email))
+        {
+            ToastService.ShowToast("User with this email already exists!<br><span><a href=\"/login\">Login</a> to an existing account?</span>");
+        }
+        else
+        {
+            var hasher = new PasswordHasher<User>();
+            User.PasswordHash = hasher.HashPassword(User, password);
+            User.RegistrationDate = DateTime.UtcNow;
+            User.EmailConfirmed = false;
+            User.LastActivityDate = DateTime.UtcNow;
+            User.Role = Roles.User;
+            User.IsActive = true;
+            UserService.AddOrUpdateOne(User);
+            await LocalStorage.SetAsync("YABTUserId", User.Id);
+            await LocalStorage.SetAsync("Email", User.Email);
+            await LocalStorage.SetAsync("Username", User.Username);
+            Navigation.NavigateTo("/library");
+        }
+    }
+
+    private bool UserExists(string email)
+    {
+        return UserService.GetUserByEmail(email) != null;
+    }
+    
+    
+    /*** Hiding/Showing password ***/
+    private string passwordType = "password";
+    private string password = string.Empty;
+
+    void TogglePassword()
+    {
+        passwordType = passwordType == "password" ? "text" : "password";
+    }
+}

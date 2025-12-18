@@ -1,0 +1,64 @@
+@using YABT.Services
+@implements IDisposable
+@inject ToastService ToastService
+
+<div class="container p-4 toast" style="@(isVisible ? "display:block" : "display:none")">
+    <div class="toast-content">
+        <span>@((MarkupString)message)</span>
+        <button class="toast-close" @onclick="CloseToast">X</button>
+    </div>
+</div>
+
+@code {
+    private bool isVisible;
+    private string? message;
+    private CancellationTokenSource? hideCts;
+
+    protected override void OnInitialized()
+    {
+        ToastService.OnShow += ShowToast;
+        ToastService.OnHide += HideToast;
+    }
+
+    private async void ShowToast(string msg)
+    {
+        hideCts?.Cancel();
+        hideCts = new CancellationTokenSource();
+
+        await InvokeAsync(() =>
+        {
+            message = msg;
+            isVisible = true;
+            StateHasChanged();
+        });
+
+        try
+        {
+            await Task.Delay(5000, hideCts.Token);
+            await InvokeAsync(HideToast);
+        }
+        catch (TaskCanceledException)
+        {
+            // expected when toast is replaced or manually closed
+        }
+    }
+
+    private void HideToast()
+    {
+        isVisible = false;
+        StateHasChanged();
+    }
+
+    private void CloseToast()
+    {
+        hideCts?.Cancel();
+        HideToast();
+    }
+
+    public void Dispose()
+    {
+        ToastService.OnShow -= ShowToast;
+        ToastService.OnHide -= HideToast;
+        hideCts?.Cancel();
+    }
+}
