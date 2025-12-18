@@ -1,0 +1,308 @@
+﻿@page "/search"
+@rendermode InteractiveServer
+@using System.Text.Json
+@using Microsoft.AspNetCore.Components.Server.ProtectedBrowserStorage
+@using YABT.Components.Layout
+@using YABT.Models
+@using YABT.Services
+@inject YABT.IServices.IBookService BookService
+@inject YABT.IServices.ILibraryEntryService LibraryService
+@inject ProtectedLocalStorage LocalStorage
+@inject ToastService ToastService
+@layout AuthenticatedLayout
+
+
+<div class="container">
+    <div class="d-flex justify-content-center my-4">
+        <div class="position-relative w-100" style="max-width:600px;">
+            <input type="text"
+                   class="form-control form-control-lg pe-5"
+                   placeholder="Search for books..."
+                   @bind="query"
+                   @bind:event="oninput"
+                   @onkeydown="HandleKeyDown" />
+        
+            <!-- Search icon inside input -->
+            <button class="btn position-absolute top-50 end-0 translate-middle-y me-1 search-btn"
+                    @onclick="Search">
+                <i class="bi bi-search fs-5"></i>
+            </button>
+
+            <!-- Clear button -->
+            @if (!string.IsNullOrWhiteSpace(query))
+            {
+                <button class="btn btn-outline-secondary btn-sm position-absolute top-50 end-0 translate-middle-y me-5"
+                        @onclick="ClearQuery">
+                    Clear
+                </button>
+            }
+        </div>
+    </div>
+
+
+    <div class="row g-3">
+        @if (Books != null && Books.Any())
+        {
+            @foreach (var book in Books)
+            {
+                <div class="col-12 col-md-6 d-flex">
+                    <!-- Book card -->
+                    <div class="card shadow-sm book-card h-100 w-100" @onclick="() => SelectBook(book)">
+                        <div class="card-body">
+                            <div class="d-flex gap-3">
+
+                                <!-- 1) Thumbnail -->
+                                <div class="book-cover">
+                                    <img src="@(string.IsNullOrEmpty(book.CoverImageURL) ? "/Images/no-cover.jpg" : book.CoverImageURL)"
+                                         alt="Book cover"
+                                         class="img-fluid rounded"/>
+                                </div>
+
+                                <!-- Right side content -->
+                                <div class="flex-grow-1">
+
+                                    <!-- 2) Title + Authors -->
+                                    <h5 class="card-title mb-1">
+                                        @book.Title
+                                    </h5>
+                                    <p class="text-muted mb-2">
+                                        @string.Join(", ", book.Authors)
+                                    </p>
+
+                                    <!-- 3) Release year + Publisher -->
+                                    <p class="mb-2">
+                                        <strong>@book.ReleaseDate?.Year</strong><br/>
+                                        <span class="text-muted">@(string.IsNullOrEmpty(book.Publisher) ? "" : "Publisher: " + book.Publisher)</span>
+                                    </p>
+
+                                    <!-- 4) Tags -->
+                                    @if (book.Categories?.Any() == true)
+                                    {
+                                        <div class="mb-2">
+                                            @foreach (var tag in book.Categories)
+                                            {
+                                                <span class="badge bg-secondary me-1">
+                                                    @tag
+                                                </span>
+                                            }
+                                        </div>
+                                    }
+
+                                    <!-- 5) Language -->
+                                    <span class="badge bg-light text-dark border">
+                                        @book.Language.ToUpper()
+                                    </span>
+
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+
+@if (SelectedBook != null)
+{
+    <div class="modal-backdrop-custom @(IsModalVisible ? "show" : "")"
+         @onclick="CloseModal"></div>
+    @if (IsModalVisible)
+    {
+        <div class="modal-wrapper">
+            <div class="modal-dialog @(IsModalVisible ? "show" : "")"
+                 @onclick:stopPropagation>
+
+                <button class="btn-close float-end" @onclick="CloseModal"></button>
+
+                <div class="d-flex gap-3 mb-3">
+                    <div class="book-cover">
+                        <img src="@(string.IsNullOrEmpty(SelectedBook.CoverImageURL)
+                                      ? "/Images/no-cover.jpg"
+                                      : SelectedBook.CoverImageURL)"/>
+                    </div>
+
+                    <div class="flex-grow-1">
+                        <h4>@SelectedBook.Title</h4>
+                        <p class="text-muted">@string.Join(", ", SelectedBook.Authors)</p>
+                        <p>@SelectedBook.Description</p>
+                    </div>
+                </div>
+
+                <div class="d-flex gap-2">
+                    <select class="form-select w-auto" @bind="SelectedStatus">
+                        @foreach (ReadingStatus status in Enum.GetValues(typeof(ReadingStatus)))
+                        {
+                            <option value="@status">@(Utility.GetEnumDescription(status))</option>
+                        }
+                    </select>
+
+                    <button class="btn btn-success" @onclick="AddToLibrary">
+                        Add to Library
+                    </button>
+                </div>
+
+            </div>
+        </div>
+    }
+}
+
+@code{
+    string query;
+    
+    private void HandleKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter")
+        {
+            Search();
+        }
+    }
+
+    private void ClearQuery()
+    {
+        query = string.Empty;
+        Books.Clear();
+    }
+    
+    private static string APIKey = "AIzaSyCx4ghm4FsXeAm46Tzhq5vMu8aXJLvRHCo";
+    
+    List<Book> Books = new List<Book>();
+    
+    public async Task Search()
+    {
+        using (HttpClient client = new HttpClient())
+        {
+            try
+            {
+                string query = this.query.Trim();
+
+                string url = "https://www.googleapis.com/books/v1/volumes" + "?q=" + Uri.EscapeDataString(query) + "&maxResults=10" + "&printType=books";
+                var response = await client.GetAsync(url);
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    // Show a different message for transient errors
+                    ToastService.ShowToast("Google Books service is temporarily unavailable. Please try again.");
+                    return;
+                }
+
+                string content = await response.Content.ReadAsStringAsync();
+                var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+                var googleResponse = JsonSerializer.Deserialize<GoogleBooksResponse>(content, options);
+
+                if (googleResponse?.Items == null || !googleResponse.Items.Any())
+                {
+                    // No books found
+                    ToastService.ShowToast("No books found for your search.");
+                    Books.Clear();
+                }
+                else
+                {
+                    Books = googleResponse.Items.Select(item => FromGoogleVolume(item.VolumeInfo)).ToList();
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error fetching page: {ex.Message}");
+                ToastService.ShowToast("An error occurred while searching. Please check your connection and try again.");
+            }
+        }
+    }
+
+    private static Book FromGoogleVolume(VolumeInfo v)
+    {
+        var book = new Book
+        {
+            Title = v.Title,
+            Authors = v.Authors ?? new(),
+            Description = v.Description,
+            Publisher = v.Publisher,
+            Categories = v.Categories ?? new(),
+            PageCount = v.PageCount,
+            ReleaseDate = ParseDate(v.PublishedDate),
+            Language = v.Language,
+            CoverImageURL = v.ImageLinks?.Thumbnail,
+            ISBN13 = v.IndustryIdentifiers?
+                .FirstOrDefault(i => i.Type == "ISBN_13")?.Identifier,
+            ISBN10 = v.IndustryIdentifiers?
+                .FirstOrDefault(i => i.Type == "ISBN_10")?.Identifier
+        };
+    
+        book.Id = Utility.ComputeBookHash(book);
+    
+        return book;
+    }
+    
+    private static DateTime? ParseDate(string date)
+    {
+        if (DateTime.TryParse(date, out var parsed))
+            return parsed;
+
+        return null;
+    }
+    
+    
+    private Book? SelectedBook { get; set; }
+    private ReadingStatus SelectedStatus { get; set; } = ReadingStatus.ToRead;
+    private bool IsModalVisible;
+    private bool ShouldAnimateIn;
+
+
+    private void SelectBook(Book book)
+    {
+        SelectedBook = book;
+        IsModalVisible = false;     // start hidden
+        ShouldAnimateIn = true;     // trigger animation next render
+    }
+    
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (ShouldAnimateIn)
+        {
+            ShouldAnimateIn = false;
+
+            await Task.Yield();     // wait one render frame
+            IsModalVisible = true;
+
+            StateHasChanged();
+        }
+    }
+
+    private async Task CloseModal()
+    {
+        IsModalVisible = false;
+        await Task.Delay(200); // must match CSS transition
+        SelectedBook = null;
+    }
+
+    private async Task AddToLibrary()
+    {
+        if (SelectedBook != null)
+        {
+            var result = await LocalStorage.GetAsync<string>("YABTUserId");
+            var userId = result.Value??"";
+            //check if the book is already in this user's library
+            if (LibraryService.GetEntryOfUser(userId, SelectedBook.Id) is not null)
+            {
+                ToastService.ShowToast("This book is already in your <a href=\"/library\">Library</a>");
+            } else
+            {
+                //if the book doesn't exist in Books collection, add it first
+                if (BookService.GetOne(SelectedBook.Id) is null)
+                {
+                    BookService.AddOrUpdateOne(SelectedBook);
+                }
+                
+                LibraryService.AddOrUpdateOne(new LibraryEntry(userId, SelectedBook.Id, SelectedStatus));
+                string authors = SelectedBook.Authors.Count > 0 ? "<br>By " + string.Join(", ", SelectedBook.Authors) : "";
+                ToastService.ShowToast($"{SelectedBook.Title}{authors}<br>successfully added to your <a href=\"/library\">Library</a>");
+                CloseModal();
+            }
+        }
+        else
+        {
+            CloseModal();
+        }
+    }
+}

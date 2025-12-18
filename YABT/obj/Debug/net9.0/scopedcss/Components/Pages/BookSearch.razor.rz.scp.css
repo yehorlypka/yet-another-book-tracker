@@ -1,0 +1,14 @@
+/* Search icon animation */
+.search-btn i[b-kby4ty07qd] {
+    transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.search-btn:hover i[b-kby4ty07qd] {
+    transform: scale(1.2);
+    color: #1b6ec2; /* matching your primary color */
+}
+
+/* Optional: cursor pointer for icon */
+.search-btn[b-kby4ty07qd] {
+    cursor: pointer;
+}
